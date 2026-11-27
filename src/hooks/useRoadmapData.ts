@@ -1,13 +1,18 @@
 import { useState, useEffect } from "react";
 import { Task, Category } from "../types";
 import { INITIAL_TASKS, INITIAL_CATEGORIES, STORAGE_KEYS } from "../constants";
+import { normalizeTaskTiming } from "../utils/taskUtils";
 
 export const useRoadmapData = () => {
   const [tasks, setTasks] = useState<Task[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.TASKS);
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          // Repair any out-of-range timing saved by older versions
+          return (parsed as Task[]).map(normalizeTaskTiming);
+        }
       } catch (e) {
         console.error("Failed to parse tasks from localStorage", e);
       }

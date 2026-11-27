@@ -37,6 +37,7 @@ export const QUARTERS: QuarterConfig[] = [
 ];
 
 export const TOTAL_WEEKS = 52;
+export const MIN_DURATION_WEEKS = 2;
 
 export const STORAGE_KEYS = {
   TASKS: "roadmap_tasks",

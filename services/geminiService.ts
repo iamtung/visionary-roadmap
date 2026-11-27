@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { Task } from "../types";
+import { Task } from "../src/types";
 
 export const generateRoadmapSuggestions = async (
   productDescription: string

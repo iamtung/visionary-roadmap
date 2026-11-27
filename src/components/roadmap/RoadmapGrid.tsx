@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { TOTAL_WEEKS } from "../../constants";
+import { MIN_DURATION_WEEKS, TOTAL_WEEKS } from "../../constants";
 import { Task, Category } from "../../types";
 import { Edit2, Trash2 } from "lucide-react";
 import { useRoadmapDimensions } from "../../hooks/useRoadmapDimensions";
@@ -10,6 +10,7 @@ interface RoadmapGridProps {
   categories: Category[];
   showCurrentTime: boolean;
   currentWeek: number;
+  currentTimePercentage?: number; // Optional precise percentage
   searchQuery: string;
   onDeleteTask: (id: string) => void;
   onEditTask: (task: Task) => void;
@@ -18,6 +19,10 @@ interface RoadmapGridProps {
   onDeleteCategory: (id: string) => void;
   onReorderCategories: (categories: Category[]) => void;
 }
+
+// Width (in weeks) a task card is rendered with; also used for lane stacking
+const getDisplayDuration = (task: Task): number =>
+  Math.max(Number(task.durationWeeks) || MIN_DURATION_WEEKS, MIN_DURATION_WEEKS);
 
 interface DragState {
   taskId: string;
@@ -33,6 +38,7 @@ export const RoadmapGrid: React.FC<RoadmapGridProps> = ({
   categories,
   showCurrentTime,
   currentWeek,
+  currentTimePercentage,
   searchQuery,
   onDeleteTask,
   onEditTask,
@@ -55,7 +61,6 @@ export const RoadmapGrid: React.FC<RoadmapGridProps> = ({
   const CARD_HEIGHT = 80;
   const CARD_GAP = 12;
   const MIN_ROW_HEIGHT = 140;
-  const MIN_DURATION_WEEKS = 2; // Minimum duration for card display
 
   const { weekWeights, cumulativeFr, totalFr, gridTemplateColumns, allMonths } =
     useRoadmapDimensions();
@@ -84,23 +89,34 @@ export const RoadmapGrid: React.FC<RoadmapGridProps> = ({
   };
 
   // 2. Calculate accurate position % for current time line
-  const currentTimePercentage = useMemo(() => {
+  const displayTimePercentage = useMemo(() => {
     if (!showCurrentTime) return 0;
 
+    // If precise percentage is provided from parent, use it
+    if (currentTimePercentage !== undefined) {
+      return currentTimePercentage;
+    }
+
+    // Fallback: Add half of current week to center the line
     let accumulatedFr = 0;
-    // Add up full weeks before current
     if (currentWeek > 1) {
       accumulatedFr =
         cumulativeFr[Math.min(currentWeek - 1, cumulativeFr.length - 1)];
     }
 
-    // Add half of current week to center the line
     if (currentWeek >= 1 && currentWeek <= weekWeights.length) {
       accumulatedFr += weekWeights[currentWeek - 1] / 2;
     }
 
     return (accumulatedFr / totalFr) * 100;
-  }, [showCurrentTime, currentWeek, cumulativeFr, weekWeights, totalFr]);
+  }, [
+    showCurrentTime,
+    currentWeek,
+    currentTimePercentage,
+    cumulativeFr,
+    weekWeights,
+    totalFr,
+  ]);
 
   // Merge real tasks with the temporary task being dragged/resized for live updates
   const displayTasks = useMemo(() => {
@@ -135,7 +151,8 @@ export const RoadmapGrid: React.FC<RoadmapGridProps> = ({
           lanes.push(0);
         }
         laneMap.set(task.id, laneIndex);
-        lanes[laneIndex] = task.startWeek + task.durationWeeks;
+        // Use the same (min-clamped) width the card is rendered with, so short tasks don't overlap
+        lanes[laneIndex] = task.startWeek + getDisplayDuration(task);
       });
 
       layouts[cat.id] = { laneMap, laneCount: Math.max(1, lanes.length) };
@@ -279,10 +296,13 @@ export const RoadmapGrid: React.FC<RoadmapGridProps> = ({
 
       {/* Body Section */}
       <div className="flex-grow overflow-auto relative flex flex-col isolate">
+        {/* Wrapper grows with the content (not the viewport), so the absolutely
+            positioned background below spans the full scroll height */}
+        <div className="relative flex flex-col flex-grow shrink-0">
         {/* Layer 0: Grid Background (Months only) & Current Time Line */}
         <div
           ref={timelineRef}
-          className="absolute inset-0 pointer-events-none left-40 right-0 h-full z-0 grid grid-cols-[repeat(52,minmax(0,1fr))]"
+          className="absolute inset-0 pointer-events-none left-40 right-0 z-0 grid grid-cols-[repeat(52,minmax(0,1fr))]"
           style={{ width: "calc(100% - 10rem)" }}
         >
           {/* Render month columns spanning their weeks */}
@@ -300,7 +320,7 @@ export const RoadmapGrid: React.FC<RoadmapGridProps> = ({
           {showCurrentTime && (
             <div
               className="absolute top-0 bottom-0 w-[2px] bg-amber-500/50 dark:bg-amber-500/70 pointer-events-none shadow-[0_0_8px_rgba(245,158,11,0.3)]"
-              style={{ left: `${currentTimePercentage}%` }}
+              style={{ left: `${displayTimePercentage}%` }}
             />
           )}
         </div>
@@ -404,10 +424,7 @@ export const RoadmapGrid: React.FC<RoadmapGridProps> = ({
 
                     const safeStart = Number(task.startWeek) || 1;
                     // Ensure minimum duration of MIN_DURATION_WEEKS for display
-                    const safeDuration = Math.max(
-                      Number(task.durationWeeks) || MIN_DURATION_WEEKS,
-                      MIN_DURATION_WEEKS
-                    );
+                    const safeDuration = getDisplayDuration(task);
 
                     // Calculate percentage-based position and width
                     // Since all weeks have equal weight (1fr each), we can use simple percentages
@@ -490,6 +507,7 @@ export const RoadmapGrid: React.FC<RoadmapGridProps> = ({
               </div>
             );
           })}
+        </div>
         </div>
       </div>
     </div>

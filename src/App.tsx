@@ -20,10 +20,9 @@ import { TaskFormModal } from "./components/roadmap/TaskFormModal";
 import { ManageAreasModal } from "./components/roadmap/ManageAreasModal";
 import { INITIAL_TASKS, INITIAL_CATEGORIES, STORAGE_KEYS } from "./constants";
 import { Task, Category } from "./types";
-import { getCurrentWeek } from "./utils/dateUtils";
-import { generateTasksCSV, parseTasksCSV } from "./utils/csvUtils";
-// @ts-ignore
-import html2canvas from "html2canvas";
+import { getCurrentWeek, getCurrentTimePercentage } from "./utils/dateUtils";
+import { parseTasksCSV } from "./utils/csvUtils";
+import { generateId, normalizeTaskTiming } from "./utils/taskUtils";
 
 import { useRoadmapData } from "./hooks/useRoadmapData";
 import { useExport } from "./hooks/useExport";
@@ -90,7 +89,27 @@ const App: React.FC = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const currentWeek = getCurrentWeek();
+  // Time tracking state for "Current Time" feature
+  const [currentWeek, setCurrentWeek] = useState(() => getCurrentWeek());
+  const [currentTimePercentage, setCurrentTimePercentage] = useState(() =>
+    getCurrentTimePercentage()
+  );
+
+  useEffect(() => {
+    if (!showCurrentTime) return;
+
+    const tick = () => {
+      const now = new Date();
+      setCurrentWeek(getCurrentWeek(now));
+      setCurrentTimePercentage(getCurrentTimePercentage(now));
+    };
+    tick(); // refresh immediately when the indicator is turned on
+
+    // Update time every minute
+    const timer = setInterval(tick, 60000);
+
+    return () => clearInterval(timer);
+  }, [showCurrentTime]);
 
   // --- Task Handlers ---
 
@@ -121,28 +140,13 @@ const App: React.FC = () => {
   const handleSaveTask = (e: React.FormEvent) => {
     e.preventDefault();
 
-    const parsedStartWeek = Number(taskFormData.startWeek);
-    const parsedDurationWeeks = Number(taskFormData.durationWeeks);
-
-    const finalData = {
-      ...taskFormData,
-      startWeek: Math.max(
-        1,
-        Math.min(52, isNaN(parsedStartWeek) ? 1 : parsedStartWeek)
-      ),
-      durationWeeks: Math.max(
-        1,
-        Math.min(52, isNaN(parsedDurationWeeks) ? 1 : parsedDurationWeeks)
-      ),
-    };
+    // Clamp so the task always ends within week 52
+    const finalData = normalizeTaskTiming(taskFormData);
 
     if (editingTask) {
       updateTask({ ...editingTask, ...finalData });
     } else {
-      addTask({
-        id: Math.random().toString(36).substr(2, 9),
-        ...finalData,
-      });
+      addTask({ id: generateId(), ...finalData });
     }
     setIsModalOpen(false);
   };
@@ -157,7 +161,7 @@ const App: React.FC = () => {
 
   const handleAddArea = () => {
     addCategory({
-      id: Math.random().toString(36).substr(2, 9),
+      id: generateId(),
       name: "New Area",
       color: "bg-slate-100 border-slate-300 text-slate-800",
     });
@@ -217,14 +221,63 @@ const App: React.FC = () => {
     reader.onload = (e) => {
       try {
         const text = e.target?.result as string;
-        const newTasks = parseTasksCSV(text);
+        const { tasks: newTasks, skipped } = parseTasksCSV(text);
+
+        // Never wipe existing data with an empty/invalid import
+        if (newTasks.length === 0) {
+          alert(
+            `No valid tasks found in the file${
+              skipped ? ` (${skipped} invalid rows skipped)` : ""
+            }. Your current roadmap was not changed.`
+          );
+          return;
+        }
+
+        const skippedNote = skipped ? `\n${skipped} invalid rows will be skipped.` : "";
+        if (
+          !window.confirm(
+            `Replace your current ${tasks.length} tasks with ${newTasks.length} imported tasks?${skippedNote}`
+          )
+        ) {
+          return;
+        }
+
+        // Create areas for categories that don't exist yet, so imported tasks stay visible
+        const knownIds = new Set(categories.map((c) => c.id));
+        const missingCategories: Category[] = [];
+        for (const t of newTasks) {
+          if (!knownIds.has(t.category)) {
+            knownIds.add(t.category);
+            missingCategories.push({
+              id: t.category,
+              name: t.category,
+              color: "bg-slate-100 border-slate-300 text-slate-800",
+            });
+          }
+        }
+        if (missingCategories.length > 0) {
+          setCategories([...categories, ...missingCategories]);
+        }
+
         setTasks(newTasks);
-        alert(`Successfully imported ${newTasks.length} tasks.`);
+        alert(
+          `Imported ${newTasks.length} tasks.` +
+            (missingCategories.length
+              ? `\nCreated ${missingCategories.length} new area(s): ${missingCategories
+                  .map((c) => c.name)
+                  .join(", ")}.`
+              : "")
+        );
       } catch (error) {
         console.error("Import error:", error);
-        alert("Failed to import CSV. Please check the file format.");
+        alert(
+          `Failed to import CSV: ${
+            error instanceof Error ? error.message : "unknown error"
+          }. Your current roadmap was not changed.`
+        );
+      } finally {
+        if (fileInputRef.current) fileInputRef.current.value = "";
       }
-      if (fileInputRef.current) fileInputRef.current.value = "";
     };
     reader.readAsText(file);
   };
@@ -357,6 +410,7 @@ const App: React.FC = () => {
             categories={categories}
             showCurrentTime={showCurrentTime}
             currentWeek={currentWeek}
+            currentTimePercentage={currentTimePercentage}
             searchQuery={searchQuery}
             onDeleteTask={handleDeleteTask}
             onEditTask={handleOpenTaskModal}
